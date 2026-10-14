@@ -84,6 +84,13 @@
   2,297 ms on the Windows scaffold leg, against vitest's 5 s default; it now
   has 7 s, about 3x. Every other test that has run over 1.7 s in CI already
   had one. CONTRIBUTING says which skipped checks are by design.
+- **The release's artefact upload can be re-run** (A2 audit S7, FORMA-179;
+  the package is unchanged). The release's `pack` job uploads `release-packed`
+  with `overwrite: true`, so re-running all jobs after a failure
+  replaces the earlier attempt's artefact instead of failing on its name (A2
+  audit S7); `publish` still checks every file against the record whose hash
+  `pack` passes as a job output. The SR43 lint's new rule K4 requires it,
+  with two seeds in `--self-test`.
 
 ## [0.6.1] - 2026-10-14
 
