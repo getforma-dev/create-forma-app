@@ -77,6 +77,14 @@
   `pack`'s setup-node sets `package-manager-cache: false`, so a move to
   setup-node v5 keeps its cache off.
 
+### Tests
+
+- **"tells an npm user to install with npm ci" has its own timeout** (FORMA-179;
+  the package is unchanged). It scaffolds a second project, which took up to
+  2,297 ms on the Windows scaffold leg, against vitest's 5 s default; it now
+  has 7 s, about 3x. Every other test that has run over 1.7 s in CI already
+  had one. CONTRIBUTING says which skipped checks are by design.
+
 ## [0.6.1] - 2026-10-14
 
 Template fixes from the Forma Stack decision brief's defects list, DR-17 and
