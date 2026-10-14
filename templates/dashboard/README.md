@@ -44,6 +44,18 @@ forma-server's retiring worker: a browser that installed a Forma worker on this
 origin before deletes its caches and unregisters it on its next visit. The
 worker is opt-in, per application; see `forma_server::sw` before turning it on.
 
+**WebKit (Safari) logs one console error per page in a debug build:** "The
+Content Security Policy 'require-trusted-types-for 'script'; trusted-types
+forma forma-runtime' was delivered in report-only mode, but does not specify a
+'report-to'". forma-server 0.2.2 sends Trusted Types in
+`Content-Security-Policy-Report-Only` in development builds, and this template
+names no reporting endpoint. It blocks nothing, and a release build sends no
+Report-Only policy without an endpoint. The Playwright suite runs Chromium,
+which logs nothing for it; a WebKit project that fails on console errors meets
+it until the server names an endpoint it answers, for example
+`PolicyExtensions::new().report_uri("/csp-reports")` on the `RenderCtx`
+(`with_policy`) and a route that accepts the POST.
+
 ---
 
 ## What's Inside
@@ -154,10 +166,10 @@ because the same rule decides how *your* pages will behave:
 
 | Measured | Compiler | IR emitted | Named signal slots | Islands | Playwright, Phase 2 |
 |---|---|---|---|---|---|
-| earlier | published `@getforma/compiler` 0.2.0 (what this template pins) | 605 B of empty shells | — | all anonymous | 2 of 16 |
-| 2026-08-06 | `forma-tools` `[Unreleased]` — the resolver fixes, **not on npm** | 14856 B | 3 of 90 | 64, of which **27 named** (`Icon` ×15, `StatCard` ×4, `ProgressBar` ×3, `StatusBadge` ×2, `UserAvatar`, `RequestVolumeChart`, `formatDuration`) and 37 anonymous | 2 of 16 |
+| earlier | published `@getforma/compiler` 0.2.0 (what this template pinned then; it pins no compiler since its pages are browser-rendered by declaration) | 605 B of empty shells | — | all anonymous | 2 of 16 |
+| 2026-08-06 | `forma-tools` `[Unreleased]` — the resolver fixes, published that day as `@getforma/compiler` 0.3.0 | 14856 B | 3 of 90 | 64, of which **27 named** (`Icon` ×15, `StatCard` ×4, `ProgressBar` ×3, `StatusBadge` ×2, `UserAvatar`, `RequestVolumeChart`, `formatDuration`) and 37 anonymous | 2 of 16 |
 
-The second row is the interesting one. The unreleased compiler fixes real
+The second row is the interesting one. Those compiler fixes are real
 defects — `.tsx` pages no longer compile to a placeholder, components imported
 by a page file resolve, islands carry their real names — and the sidebar, top
 bar and layout genuinely arrive as server-rendered markup. The page *content*

@@ -132,6 +132,17 @@ attributes. Prefer a stylesheet anyway —
 put styling in `admin/src/styles/app.css` (or add another entry to `cssEntries`
 in `admin/build.ts`) so it is cached, hashed and served from `/_assets`.
 
+**WebKit (Safari) logs one console error per page in a debug build:** "The
+Content Security Policy 'require-trusted-types-for 'script'; trusted-types
+forma forma-runtime' was delivered in report-only mode, but does not specify a
+'report-to'". forma-server 0.2.2 sends Trusted Types in
+`Content-Security-Policy-Report-Only` in development builds, and this template
+names no reporting endpoint. It blocks nothing; a release build sends no
+Report-Only policy without an endpoint, so the message goes. To silence it in
+development too, or to collect the reports, name an endpoint the server
+answers: `PolicyExtensions::new().report_uri("/csp-reports")` on the
+`RenderCtx` (`with_policy`) and a route that accepts the POST.
+
 ## Service worker
 
 None. `main.rs` configures forma-server's worker setting off

@@ -458,19 +458,20 @@ describe.each(TEMPLATES)('%s template', (template) => {
   it('pins frontend dependencies at or above the versions whose fixes it needs', () => {
     const pkg = readJson(template, 'admin', 'package.json');
     const all = { ...pkg.dependencies, ...pkg.devDependencies };
-    // core 2.0.0: the new Function fallback is deleted, so the runtime is
-    // CSP-safe with nothing left to misconfigure; expressions evaluate through
-    // an allowlist AST interpreter that cannot reach a global. core 2.0.2
-    // (release A1): adoption keeps what the user entered before activation,
-    // adopts Fragments and inline SVG, and binds textarea and title text by
-    // the element, which forma-server 0.2.1's server HTML (forma-ir 0.2.1)
-    // writes without markers.
-    expect(all['@getforma/core']).toBe('^2.0.2');
-    // build 0.2.0: below this the Tailwind step spawned npx via execFileSync,
-    // which cannot work on Windows, and every build emitted an island registry
-    // that resolved from nowhere and had to be deleted by hand. build 0.3.0
-    // (release A1): a caret on 0.2.0 holds the minor, so it never reaches 0.3.x.
-    expect(all['@getforma/build']).toBe('^0.3.0');
+    // core 2.1.0 (release A2): the bridge the templates are written for. Its
+    // own writes pass Trusted Types, so forma-server 0.2.2's Report-Only
+    // policy (a development build sends it) reports none of them; a list
+    // whose client array differs in count from the server's rows fails the
+    // island instead of deleting rows; and the expression budgets are per
+    // task. Below it the templates' pages are not what forma-server 0.2.2
+    // reports on, and 2.0.x warns nothing in development.
+    expect(all['@getforma/core']).toBe('^2.1.0');
+    // build 0.3.1 (release A2): the templates' scripts pass --strict, which
+    // 0.3.0 ignores (a construct the server cannot render would pass), and
+    // the dashboard's entry declares ssr: false, which 0.3.1 honours; its
+    // production output is swapped in whole, so a failed build leaves the
+    // last good dist/ for rust-embed.
+    expect(all['@getforma/build']).toBe('^0.3.1');
     expect(pkg.engines?.node).toBe('>=20.19.0');
   });
 
@@ -559,10 +560,12 @@ describe('minimal template', () => {
     // 0.3.0 resolves components exported the way esbuild emits them, so a .tsx
     // page no longer compiles to an empty div; it also gives every slot family
     // a page-unique name and gives show branches and dynamic text their SSR
-    // defaults, so the server stops rendering the wrong branch. 0.3.6 (release
-    // A1) is the version the lockfile holds and the scaffold gate builds with,
-    // released with the core and build this template requires.
-    expect(pkg.devDependencies['@getforma/compiler']).toBe('^0.3.6');
+    // defaults, so the server stops rendering the wrong branch. 0.3.7 (release
+    // A2) reports every construct it cannot represent with a code, file and
+    // line, which is what build 0.3.1's --strict fails on: under --strict
+    // build 0.3.1 refuses an SSR build with a compiler below 0.3.7, so the two
+    // move together.
+    expect(pkg.devDependencies['@getforma/compiler']).toBe('^0.3.7');
   });
 
   it('loads its IR modules with the strict loader and renders a loaded route with try_render, passing slots', () => {

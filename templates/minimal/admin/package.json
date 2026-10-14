@@ -7,11 +7,11 @@
     "dev": "tsx build.ts --watch --strict"
   },
   "dependencies": {
-    "@getforma/core": "^2.0.2"
+    "@getforma/core": "^2.1.0"
   },
   "devDependencies": {
-    "@getforma/build": "^0.3.0",
-    "@getforma/compiler": "^0.3.6",
+    "@getforma/build": "^0.3.1",
+    "@getforma/compiler": "^0.3.7",
     "esbuild": "^0.28.1",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0"

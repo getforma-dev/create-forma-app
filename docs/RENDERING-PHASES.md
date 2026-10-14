@@ -45,7 +45,7 @@ Two consequences for a template author:
 
 1. **A page whose content depends on data fetched at runtime may compile to
    almost nothing.** Following a component *call* is the easy half, and the
-   unreleased compiler does it well (see the re-measurement below). What no
+   compiler does it well since 0.3.0 (see the re-measurement below). What no
    compiler here can do is evaluate `servers.map(s => <ServerCard s={s}/>)`
    before the fetch that fills `servers` has happened, or inline
    `<StatCard value={m.value}/>` when `m` does not exist until runtime. Those
@@ -77,7 +77,7 @@ the Phase 1 shell `render_page` used to substitute for it.
 fetched at runtime from its own `/api/*` routes — `.map()` over a fetched
 array, components handed a non-literal prop — and that is the shape no
 source-walking compiler can prove. (It is *not* simply "it uses components":
-component resolution is fixed in the unreleased compiler and the dashboard is
+component resolution is fixed in the compiler since 0.3.0 and the dashboard is
 still 2/16 under Phase 2. The measurement is below.) Phase 1 is declared on
 both sides (L-13): its `build.ts` declares the entry `ssr: false`, its
 `main.rs` serves every page through `render_browser_shell`, and there is no
@@ -100,13 +100,14 @@ treat it as a dated measurement, not a constant.
 ## This rule is version-bound. Check it before you repeat it.
 
 The templates install **published** versions, the ones each template's
-lockfile names (`@getforma/compiler` 0.3.6 and `@getforma/build` 0.3.0 as of
-2026-10-14, release A1), so what a scaffolded project gets is what was published and
+lockfile names (`@getforma/compiler` 0.3.7 and `@getforma/build` 0.3.1 as of
+2026-10-14, release A2), so what a scaffolded project gets is what was published and
 locked — not whatever is in the `forma-tools` working tree.
 
-That matters right now, because a large batch of resolver fixes sits in
-`forma-tools`' `[Unreleased]` and **is not on npm**. Until it publishes, a
-scaffolded app behaves as described above.
+The resolver fixes this page measured from `forma-tools`' `[Unreleased]` on
+2026-08-06 were published that day as `@getforma/compiler` 0.3.0, and every
+lockfile the templates have shipped since release A1 holds a compiler with
+them; a scaffolded app behaves as described above.
 
 What changes when it does publish:
 
