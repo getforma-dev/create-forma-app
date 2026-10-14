@@ -28,6 +28,30 @@
   runs): its fix is esbuild 0.28.1, outside tsup 8.5.1's `^0.27.0`, and
   tsup 9.0.0 (esbuild `^0.28.2`) was published on 2026-10-14, a major bump
   left for its own change.
+- **Every `npm ci` in the workflows is followed by `npm audit signatures`**
+  (FORMA-180, the A2 audit's F11 for this repository): `release.yml`'s
+  `scaffold` and `pack` jobs and `ci.yml`'s `scaffold` job installed the tree
+  without the registry's signature check that `ci.yml`'s `test` job already
+  ran, and `pack` installs the tree that builds the published tarball. The
+  step reads the registry's public keys and needs no token; `publish` is
+  untouched, and the packed tarball's SHA-256 is the same before and after.
+  `scripts/check-release-workflow.rb` gains rule S1, the text every
+  repository's lint shares: the step after every `npm ci` is its own
+  `run: npm audit signatures`, and the audit appears nowhere else; eight
+  seeded violations (the audit missing, before the install, after the
+  build, swallowed by `|| true` or `; true`, combined with the install, added
+  to `publish`, and a new job that installs without it) each fail the
+  self-test's copy, 66 of 66 checks.
+
+### Tests
+
+- **The scaffold E2E suite's `afterAll` has its own 120 s budget**
+  (FORMA-180): removing two scaffolded projects, each with its
+  `node_modules` and cargo `target`, is not reliably under vitest's 10 s hook
+  default on a Windows runner. Run 38645807340 passed all 155 tests on
+  `windows-latest` and then failed in that hook (`tests/scaffold.test.ts`,
+  `rmrf(tmp)`), which this PR's vitest 4.1.0 → 4.1.11 move made visible; a
+  slow delete is no longer a red run, and a stuck one still ends.
 
 ## [0.6.2] - 2026-10-14
 
