@@ -4,6 +4,60 @@
 
 ### Changed
 
+- **The templates move onto release A2's bridge** (FORMA-133; DR-11, DR-12,
+  DR-17, DR-18, DR-25, L-13; v2 13.3), so a new application starts on the API
+  it keeps until 3.0.0, under `--strict`, and its move to 3.0.0 is one commit.
+  They need forma-server and forma-ir 0.2.2, `@getforma/core` 2.1.0,
+  `@getforma/build` 0.3.1 and `@getforma/compiler` 0.3.7, which release A2
+  publishes; the release sets the templates' ranges and regenerates their
+  lockfiles against that set (FORMA-138). Until then the scaffold gate cannot
+  pass: the lockfiles still hold release A1's set, whose forma-server has no
+  `try_render`.
+  - Both servers render every page through `try_render` or
+    `render_browser_shell` and return the `PageResponse` it gives, which
+    always writes `Cache-Control: no-store`, the policy for the page's nonce
+    and the document headers. A `RenderError` is answered with a 500 and
+    logged through `tracing` by code and route; no failure becomes an empty
+    page. Neither calls `render_page`, `PageOutput::headers()`,
+    `assets::load_manifest` or the lenient `load_ir_modules`. The one
+    deprecated name left is `config_script: None`, which every 0.2.x
+    `PageConfig` literal must name, allowed at that literal alone.
+  - The minimal template loads its modules with `load_ir_modules_strict`, so
+    a module that is missing or corrupt stops the server before it binds,
+    naming the route, the file and the code. `/` is rendered by `try_render`
+    when the build emitted its module (`build:ssr`) and by
+    `render_browser_shell` when it did not (`build`), decided at start and
+    never in place of a failed render.
+  - The dashboard's entry declares `ssr: false`, and every page is served by
+    `render_browser_shell`: a browser route by declaration (L-13).
+  - Both templates' build scripts pass `--strict`, which `build.ts` maps to
+    `strict: true` only when present, so `FORMA_STRICT=1` still turns strict
+    mode on without the flag (`strict: false` would switch it off).
+  - Both servers configure forma-server's service worker off: no page
+    registers one, and `/sw.js` serves the retiring worker.
+  - The templates' `rust-version = "1.85"` and `resolver = "3"` are kept.
+
+  The scaffold gate's header test (SR6) now reads every build a template
+  offers, so the minimal template's page is checked both as `try_render`'s
+  server-rendered page and as its browser shell, and every page must also
+  register no worker while `/sw.js` serves the retiring one. The gate fails on
+  any `use of deprecated` warning from a template's Rust, and builds a
+  construct strict mode refuses (`.map()` as a child, BUILD-701) to check that
+  `build:ssr` fails naming its code, file and line, passes without the flag,
+  and fails again under `FORMA_STRICT=1`.
+  Verified by `tests/templates.test.ts` > "renders every page with try_render or render_browser_shell and sends its PageResponse, so no-store travels with the nonce"
+  Verified by `tests/templates.test.ts` > "uses no API forma-server deprecates, naming config_script only as None in each PageConfig"
+  Verified by `tests/templates.test.ts` > "installs a tracing subscriber and logs each render error through it"
+  Verified by `tests/templates.test.ts` > "builds with --strict, and leaves FORMA_STRICT working when the flag is absent"
+  Verified by `tests/templates.test.ts` > "registers no service worker, and routes /sw.js to forma-server's retiring worker"
+  Verified by `tests/templates.test.ts` > "loads its IR modules with the strict loader and renders a loaded route with try_render, passing slots"
+  Verified by `tests/templates.test.ts` > "declares its entry browser-rendered (ssr: false), turns no SSR on, and offers no build:ssr script"
+  Verified by `tests/templates.test.ts` > "serves every page through render_browser_shell, by declaration, and loads no IR"
+  Verified by `tests/scaffold.test.ts` > "%s: every page answers no-store with a fresh nonce per fetch, and registers no service worker"
+  Verified by `tests/scaffold.test.ts` > "dashboard: serves each page as its browser shell, by declaration (ssr: false)"
+  Verified by `tests/scaffold.test.ts` > "minimal: build:ssr is strict: a construct the server cannot render fails the build, naming its code, file and line"
+  Verified by `tests/scaffold.test.ts` > "%s: npm ci, frontend build, cargo check --locked"
+
 - **The templates require `esbuild ^0.28.1`, the range `@getforma/build`
   0.3.0 requires, so a scaffolded app installs one esbuild** (FORMA-165). With
   the templates on `^0.25.0` beside build's `^0.28.1` and tsx's `~0.28.0`, npm
@@ -43,6 +97,14 @@
 
 ### Security
 
+- **The scaffold gate runs `npm audit signatures` (SR2, FORMA-133; the package
+  is unchanged)** over each template's install, after its `npm ci`, on Linux
+  and Windows and on the release path; CI's scaffold job runs it over this
+  repository's own install too. It passes against the set published on
+  2026-10-14: every package of the minimal template's install (27), the
+  dashboard's (44) and this repository's (93) carries a verified registry
+  signature.
+  Verified by `tests/scaffold.test.ts` > "%s: npm ci, frontend build, cargo check --locked"
 - **CI: actions pinned to commits, every job declares its token, and the
   dispatch payload is checked (DR-32, SR21, FORMA-010; the package is
   unchanged).** Each `uses:` names the commit its tag or branch pointed to on
@@ -156,8 +218,10 @@ Verified by `tests/templates.test.ts` > "pins frontend dependencies at or above 
   document headers. The scaffold gate fetches every page route of each
   template twice and requires `no-store` on each response and a different
   nonce on every fetch, each matching its own HTML.
-  Verified by `tests/templates.test.ts` > "sends every rendered page through PageOutput::headers(), so no-store travels with the nonce"
-  Verified by `tests/scaffold.test.ts` > "%s: every page response carries Cache-Control: no-store and a fresh nonce per fetch"
+  Verified by `tests/templates.test.ts` > "renders every page with try_render or render_browser_shell and sends its PageResponse, so no-store travels with the nonce"
+  Verified by `tests/scaffold.test.ts` > "%s: every page answers no-store with a fresh nonce per fetch, and registers no service worker"
+  (Both tests renamed by FORMA-133, when the templates moved from
+  `PageOutput::headers()` to `PageResponse`.)
 
 ## [0.6.0] - 2026-08-06
 

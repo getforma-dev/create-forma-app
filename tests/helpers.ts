@@ -81,7 +81,8 @@ export function runCli(args: string[], cwd: string, env: Record<string, string> 
   });
 }
 
-export function run(cmd: string, args: string[], cwd: string, timeout = 900_000) {
+/** Run a command; `env` overrides variables, e.g. `FORMA_STRICT` for a build. */
+export function run(cmd: string, args: string[], cwd: string, timeout = 900_000, env: Record<string, string> = {}) {
   return spawnSync(cmd, args, {
     cwd,
     encoding: 'utf8',
@@ -90,7 +91,7 @@ export function run(cmd: string, args: string[], cwd: string, timeout = 900_000)
     // kill a larger graph mid-output.
     maxBuffer: 64 * 1024 * 1024,
     shell: process.platform === 'win32',
-    env: { ...process.env, FORCE_COLOR: '0' },
+    env: { ...process.env, FORCE_COLOR: '0', ...env },
   });
 }
 

@@ -2,8 +2,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsx build.ts",
-    "dev": "tsx build.ts --watch",
+    "build": "tsx build.ts --strict",
+    "dev": "tsx build.ts --watch --strict",
     "test": "playwright test",
     "test:headed": "playwright test --headed"
   },

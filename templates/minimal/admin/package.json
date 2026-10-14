@@ -2,9 +2,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsx build.ts",
-    "build:ssr": "tsx build.ts --ssr",
-    "dev": "tsx build.ts --watch"
+    "build": "tsx build.ts --strict",
+    "build:ssr": "tsx build.ts --ssr --strict",
+    "dev": "tsx build.ts --watch --strict"
   },
   "dependencies": {
     "@getforma/core": "^2.0.2"

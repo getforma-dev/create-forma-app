@@ -349,30 +349,102 @@ describe.each(TEMPLATES)('%s template', (template) => {
     expect(code).not.toContain('0.0.0.0');
   });
 
-  it('sends every rendered page through PageOutput::headers(), so no-store travels with the nonce', () => {
-    // The nonce in a page's policy is per request and only matches the HTML
-    // from the same render_page call, and a cached copy would replay one
-    // nonce to every visitor. forma-server's PageOutput::headers() sends the
-    // policy with `Cache-Control: no-store` and the document headers; a page
-    // that assembles its own headers is how the minimal template came to
-    // send no `no-store` at all (DR-17).
+  it('renders every page with try_render or render_browser_shell and sends its PageResponse, so no-store travels with the nonce', () => {
+    // The nonce in a page's policy is drawn per render and only matches that
+    // render's HTML, and a cached copy would replay one nonce to every
+    // visitor. A PageResponse writes the policy, `Cache-Control: no-store` and
+    // the document headers whenever it is sent, and its HTML leaves without
+    // them only through `into_parts_unchecked()`. render_page's PageOutput
+    // left the headers to the handler, which is how the minimal template came
+    // to send no `no-store` at all (DR-17).
     const main = stripComments(
       fs.readFileSync(path.join(TEMPLATES_DIR, template, 'src', 'main.rs'), 'utf8'),
     );
-    const renders = main.match(/render_page\(/g)?.length ?? 0;
-    expect(renders).toBeGreaterThan(0);
-    expect(main.match(/page\.headers\(\)/g)?.length ?? 0).toBe(renders);
-    // ...and no page builds the policy or the cache header by hand.
-    expect(main).not.toContain('page.csp');
+    expect(main.match(/\b(?:try_render|render_browser_shell)\(/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(main).toMatch(/Ok\(page\) => page\.into_response\(\)/);
+    // No page leaves any other way, and none builds the policy or the cache
+    // header by hand.
+    expect(main).not.toMatch(/\brender_page(?:_with_nonce)?\(/);
+    expect(main).not.toContain('into_parts_unchecked');
+    expect(main).not.toContain('PageOutput');
     expect(main).not.toMatch(/content-security-policy|CONTENT_SECURITY_POLICY|CACHE_CONTROL/i);
+    // A failed render comes back as a RenderError, which the handler answers
+    // with its own response rather than a panic (DR-11).
+    expect(main).not.toMatch(/(?:try_render|render_browser_shell)\([^;]*?\)\s*\.(?:unwrap|expect)\(/);
+    expect(main).toMatch(/Err\(error\) => \{[\s\S]{0,300}?StatusCode::INTERNAL_SERVER_ERROR/);
   });
 
-  it('installs a tracing subscriber so forma-server fallbacks are visible', () => {
-    // render_page degrades Phase 2 -> Phase 1 through tracing::warn!. With no
-    // subscriber that warning is discarded and a broken SSR build is
-    // indistinguishable from a working client-rendered one.
-    const main = fs.readFileSync(path.join(TEMPLATES_DIR, template, 'src', 'main.rs'), 'utf8');
+  it('uses no API forma-server deprecates, naming config_script only as None in each PageConfig', () => {
+    // A new application starts on the bridge's own API, so its move to 3.0.0
+    // is one commit (v2 13.3). The scaffold gate holds the compiler to it: a
+    // template build that warns `use of deprecated` fails. Every 0.2.x
+    // PageConfig literal has to name `config_script` (DR-18), so that one
+    // name is allowed, at each literal alone, and only as None.
+    const main = stripComments(
+      fs.readFileSync(path.join(TEMPLATES_DIR, template, 'src', 'main.rs'), 'utf8'),
+    );
+    for (const deprecated of [
+      /\brender_page\(/,
+      /\brender_page_with_nonce\(/,
+      /\bload_manifest::</,
+      /\bload_ir_modules::</,
+      /\bPageOutput\b/,
+      /\.headers\(\)/,
+    ]) {
+      expect(main).not.toMatch(deprecated);
+    }
+    const literals = main.match(/\bPageConfig \{/g)?.length ?? 0;
+    expect(literals).toBeGreaterThan(0);
+    expect(main.match(/#\[allow\(deprecated\)\]\s*let \w+ = PageConfig \{/g)?.length ?? 0).toBe(literals);
+    expect(main.match(/allow\(deprecated\)/g)?.length ?? 0).toBe(literals);
+    expect(main.match(/\bconfig_script: None,/g)?.length ?? 0).toBe(literals);
+    expect(main.match(/\bconfig_script:/g)?.length ?? 0).toBe(literals);
+  });
+
+  it('installs a tracing subscriber and logs each render error through it', () => {
+    // try_render returns a failure instead of serving an empty shell, and
+    // forma-server logs none of it: the handler is where a failure is
+    // counted, by code and route (DR-11). With no subscriber those lines, and
+    // forma-server's own security events, are discarded.
+    const main = stripComments(
+      fs.readFileSync(path.join(TEMPLATES_DIR, template, 'src', 'main.rs'), 'utf8'),
+    );
     expect(main).toContain('tracing_subscriber::fmt::init()');
+    expect(main).toMatch(/tracing::error!\(code = error\.code\(\), route = error\.route\(\)/);
+  });
+
+  it('builds with --strict, and leaves FORMA_STRICT working when the flag is absent', () => {
+    // A new application starts under strict mode (v2 13.3): a construct the
+    // compiler cannot render on the server fails the build with its code,
+    // file and line (DR-1). @getforma/build reads no command-line flag, so
+    // build.ts maps `--strict`; it adds `strict: true` only when the flag is
+    // there, because `strict: false` would switch FORMA_STRICT=1 off too.
+    // The scaffold gate builds a construct strict mode refuses ("minimal:
+    // build:ssr is strict ...").
+    const pkg = readJson(template, 'admin', 'package.json');
+    const builds = Object.entries<string>(pkg.scripts).filter(([, command]) => /\bbuild\.ts\b/.test(command));
+    expect(builds.length).toBeGreaterThan(0);
+    for (const [script, command] of builds) {
+      expect(command, `admin/package.json scripts.${script}`).toMatch(/\s--strict(\s|$)/);
+    }
+    const build = stripComments(
+      fs.readFileSync(path.join(TEMPLATES_DIR, template, 'admin', 'build.ts'), 'utf8'),
+    );
+    expect(build).toContain("...(process.argv.includes('--strict') ? { strict: true } : {}),");
+    expect(build.match(/\bstrict:/g)?.length ?? 0).toBe(1);
+  });
+
+  it("registers no service worker, and routes /sw.js to forma-server's retiring worker", () => {
+    // DR-25: the worker is an application's choice, off here. No page
+    // registers one, and /sw.js serves the retiring worker, which deletes the
+    // caches an earlier Forma worker left on the origin and unregisters. The
+    // scaffold gate reads both from the running server.
+    const main = stripComments(
+      fs.readFileSync(path.join(TEMPLATES_DIR, template, 'src', 'main.rs'), 'utf8'),
+    );
+    expect(main).toContain('sw::configure(sw::ServiceWorker::off())');
+    expect(main).not.toMatch(/\.enabled\(\)/);
+    expect(main).toContain('.route("/sw.js", get(sw::serve_sw::<Assets>))');
   });
 
   it('pins frontend dependencies at or above the versions whose fixes it needs', () => {
@@ -485,13 +557,23 @@ describe('minimal template', () => {
     expect(pkg.devDependencies['@getforma/compiler']).toBe('^0.3.6');
   });
 
-  it('loads IR modules and passes slots, so Phase 2 is reachable', () => {
-    const main = fs.readFileSync(path.join(TEMPLATES_DIR, 'minimal', 'src', 'main.rs'), 'utf8');
-    expect(main).toContain('load_ir_modules::<Assets>');
-    // render_page falls straight back to Phase 1 unless BOTH ir_module and
-    // slots are Some — `slots: None` is what made the dashboard's SSR dead.
+  it('loads its IR modules with the strict loader and renders a loaded route with try_render, passing slots', () => {
+    const main = stripComments(
+      fs.readFileSync(path.join(TEMPLATES_DIR, 'minimal', 'src', 'main.rs'), 'utf8'),
+    );
+    // A module the build declared that is missing or corrupt stops the server
+    // at start, naming route, file and code (DR-11).
+    expect(main).toContain('load_ir_modules_strict::<Assets>');
+    // try_render needs BOTH ir_module and slots, and returns RENDER-101
+    // without them; under render_page, `slots: None` silently made the
+    // dashboard's SSR dead.
     expect(main).toContain('slots: slots.as_ref()');
     expect(main).toContain('SlotData::new_from_defaults');
+    // The route's mode is the build's, read at start: a route with a module
+    // renders on the server, and a browser shell is served only for a route
+    // built without one, never in place of a failed render.
+    expect(main).toMatch(/RenderMode::Phase2SsrReconcile => try_render\(/);
+    expect(main).toMatch(/RenderMode::Phase1ClientMount => render_browser_shell\(/);
   });
 
   it('styles through a CSS entry rather than style attributes', () => {
@@ -510,13 +592,21 @@ describe('minimal template', () => {
 });
 
 describe('dashboard template', () => {
-  it('does not configure SSR, and offers no build:ssr script to reach for', () => {
+  it('declares its entry browser-rendered (ssr: false), turns no SSR on, and offers no build:ssr script', () => {
     // Measured: with SSR on, the emitted IR renders to island placeholders and
-    // 14 of the template's 16 Playwright tests fail. See the README.
+    // 14 of the template's 16 Playwright tests fail. See the README. So the
+    // browser route is a declaration in the build (L-13, DR-11), not the
+    // absence of one.
     const build = stripComments(
       fs.readFileSync(path.join(TEMPLATES_DIR, 'dashboard', 'admin', 'build.ts'), 'utf8'),
     );
-    expect(build).not.toContain('ssr:');
+    const entryPoints = /entryPoints:\s*\[([\s\S]*?)\]/.exec(build)?.[1] ?? '';
+    const entries = [...entryPoints.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]!);
+    expect(entries.length, 'no entryPoints found in build.ts').toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(entry, 'an entry that does not declare ssr: false').toMatch(/\bssr:\s*false\b/);
+    }
+    expect(build.replace(entryPoints, ''), 'SSR turned on outside the entries').not.toMatch(/\bssr:/);
     expect(build).not.toContain('ssrEntryPoints');
     const pkg = readJson('dashboard', 'admin', 'package.json');
     expect(pkg.scripts['build:ssr']).toBeUndefined();
@@ -524,9 +614,13 @@ describe('dashboard template', () => {
     expect(pkg.devDependencies['@getforma/compiler']).toBeUndefined();
   });
 
-  it('asks for Phase 1 explicitly instead of computing a mode it discards', () => {
-    const main = fs.readFileSync(path.join(TEMPLATES_DIR, 'dashboard', 'src', 'main.rs'), 'utf8');
-    expect(main).toContain('render_mode: RenderMode::Phase1ClientMount');
+  it('serves every page through render_browser_shell, by declaration, and loads no IR', () => {
+    const main = stripComments(
+      fs.readFileSync(path.join(TEMPLATES_DIR, 'dashboard', 'src', 'main.rs'), 'utf8'),
+    );
+    expect(main).toContain('render_browser_shell(&config, &RenderCtx::new())');
+    expect(main).not.toContain('try_render');
+    expect(main).toContain('ir_module: None');
     expect(main).not.toContain('load_ir_modules');
   });
 

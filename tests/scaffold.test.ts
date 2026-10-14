@@ -196,6 +196,19 @@ describe('scaffolding', () => {
 
 // ── The gate: does what we ship actually build? ────────────────────────
 
+/**
+ * A template's page routes: those whose handler renders a page, through
+ * `try_render` or `render_browser_shell`, read from its main.rs, so a page
+ * added to a template is covered without editing the tests.
+ */
+function pageRoutes(main: string): string[] {
+  const rendersPage = (handler: string) =>
+    /\b(?:try_render|render_browser_shell)\(/.test(new RegExp(`async fn ${handler}\\b[\\s\\S]*?\\n}`).exec(main)?.[0] ?? '');
+  return [...main.matchAll(/\.route\("([^"]+)",\s*get\((\w+)\)\)/g)]
+    .filter((m) => rendersPage(m[2]!))
+    .map((m) => m[1]!);
+}
+
 describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
   let tmp: string;
 
@@ -221,6 +234,12 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
     const install = run('npm', ['ci', '--no-audit', '--no-fund'], admin);
     expect(install.status, install.stderr).toBe(0);
 
+    // SR2: every package the lockfile installed carries the npm registry's
+    // signature, checked against the registry's published keys, and every
+    // attestation it carries verifies.
+    const signatures = run('npm', ['audit', 'signatures'], admin);
+    expect(signatures.status, signatures.stdout + signatures.stderr).toBe(0);
+
     // One esbuild in the installed tree, shared by the template, @getforma/build
     // and tsx. `npm query` lists every physical copy (FORMA-165).
     const esbuild = run('npm', ['query', '#esbuild'], admin);
@@ -240,6 +259,9 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
 
     const check = run('cargo', ['check', '--locked'], dest);
     expect(check.status, check.stderr).toBe(0);
+    // The template calls no API its forma-server deprecates, so its move to
+    // 3.0.0 is one commit (v2 13.3); the compiler is the judge.
+    expect(check.stderr, 'the template uses an API forma-server deprecates').not.toMatch(/use of deprecated/);
 
     // A plain cargo command, as a user's first `cargo run`, rewrites a
     // lockfile it would have written differently, even only in its order.
@@ -292,7 +314,46 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
     });
   }, 900_000);
 
-  it('dashboard: serves a Phase 1 shell, deliberately', async () => {
+  it('minimal: build:ssr is strict: a construct the server cannot render fails the build, naming its code, file and line', () => {
+    // A `.map()` child is BUILD-701: the server renders an empty island and
+    // the rows never appear after activation. The template's scripts pass
+    // --strict, so its SSR build refuses it; build.ts maps the flag and adds
+    // nothing without it, so the same build without the flag only warns, and
+    // FORMA_STRICT=1 still turns strict mode on.
+    const name = 'e2e-strict';
+    expect(runCli([name, '--template', 'minimal'], tmp).status).toBe(0);
+    const admin = path.join(tmp, name, 'admin');
+    expect(run('npm', ['ci', '--no-audit', '--no-fund'], admin).status).toBe(0);
+
+    const appPath = path.join(admin, 'src', 'home', 'app.tsx');
+    const app = fs.readFileSync(appPath, 'utf8');
+    const probe = app.replace(
+      '<p class="actions">',
+      '<ul class="probe">{["a", "b"].map((i) => <li>{i}</li>)}</ul>\n      <p class="actions">',
+    );
+    expect(probe, 'app.tsx has no <p class="actions"> to put the probe before').not.toBe(app);
+    fs.writeFileSync(appPath, probe);
+    const at = /src[\\/]home[\\/]app\.tsx:\d+:\d+/;
+
+    const strict = run('npm', ['run', 'build:ssr'], admin);
+    const strictOut = strict.stdout + strict.stderr;
+    expect(strict.status, strictOut).not.toBe(0);
+    expect(strictOut).toContain('strict mode');
+    expect(strictOut).toContain('BUILD-701');
+    expect(strictOut).toMatch(at);
+
+    const lenient = run('npx', ['tsx', 'build.ts', '--ssr'], admin);
+    const lenientOut = lenient.stdout + lenient.stderr;
+    expect(lenient.status, lenientOut).toBe(0);
+    expect(lenientOut).toContain('BUILD-701');
+
+    const fromEnv = run('npx', ['tsx', 'build.ts', '--ssr'], admin, 900_000, { FORMA_STRICT: '1' });
+    const fromEnvOut = fromEnv.stdout + fromEnv.stderr;
+    expect(fromEnv.status, fromEnvOut).not.toBe(0);
+    expect(fromEnvOut).toContain('BUILD-701');
+  }, 900_000);
+
+  it('dashboard: serves each page as its browser shell, by declaration (ssr: false)', async () => {
     const name = 'e2e-phase1';
     expect(runCli([name, '--template', 'dashboard'], tmp).status).toBe(0);
     const dest = path.join(tmp, name);
@@ -302,26 +363,40 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
     expect(run('npm', ['run', 'build'], admin).status).toBe(0);
     expect(run('cargo', ['build', '--locked'], dest).status).toBe(0);
 
-    await withServer(dest, name, (body, res) => {
-      expect(body).toContain('<div id="app"></div>');
-      expect(body).not.toContain('data-forma-ssr');
-      // The CSP has to carry a nonce, and the same nonce has to be on the
-      // script tag render_page emitted, or the page cannot run at all.
-      const csp = res.headers.get('content-security-policy') ?? '';
-      const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
-      expect(nonce, `no nonce in CSP: ${csp}`).toBeTruthy();
-      // Assert per-directive, not with a substring sweep over the whole
-      // header. forma-server 0.2.0 carries `style-src-attr 'unsafe-inline'`
-      // deliberately — that directive governs `style=""` ATTRIBUTES only, so
-      // it lets server-rendered style attributes through while `style-src`
-      // still refuses inline <style> blocks. A blanket not-toContain cannot
-      // tell those apart and fails on a header that got stricter, not looser.
-      const directive = (name: string) =>
-        csp.split(';').map((d) => d.trim()).find((d) => d.startsWith(`${name} `)) ?? '';
-      expect(directive('script-src'), `script-src: ${csp}`).not.toContain('unsafe-inline');
-      expect(directive('style-src'), `style-src: ${csp}`).not.toContain('unsafe-inline');
-      expect(directive('default-src')).toContain("'none'");
-      expect(body).toContain(`nonce="${nonce}"`);
+    // The entry declares `ssr: false`, so the build emits no module for any
+    // route; the server never walks one, and its pages are served by
+    // render_browser_shell, by declaration rather than as a fallback (L-13).
+    const manifest = JSON.parse(fs.readFileSync(path.join(admin, 'dist', 'manifest.json'), 'utf8'));
+    const withModules = Object.entries<{ ir?: string }>(manifest.routes).filter(([, r]) => r.ir).map(([route]) => route);
+    expect(withModules, 'a route with an IR module').toEqual([]);
+    const pages = pageRoutes(fs.readFileSync(path.join(dest, 'src', 'main.rs'), 'utf8'));
+    expect(pages).toHaveLength(5);
+
+    await withServer(dest, name, async (_body, _res, get) => {
+      for (const route of pages) {
+        const res = await get(route);
+        const body = await res.text();
+        expect(res.status, route).toBe(200);
+        expect(body, route).toContain('<div id="app"></div>');
+        expect(body, route).not.toContain('data-forma-ssr');
+        // The CSP has to carry a nonce, and the same nonce has to be on the
+        // script tag the shell carries, or the page cannot run at all.
+        const csp = res.headers.get('content-security-policy') ?? '';
+        const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+        expect(nonce, `${route}: no nonce in CSP: ${csp}`).toBeTruthy();
+        // Assert per-directive, not with a substring sweep over the whole
+        // header. forma-server 0.2.0 carries `style-src-attr 'unsafe-inline'`
+        // deliberately — that directive governs `style=""` ATTRIBUTES only, so
+        // it lets server-rendered style attributes through while `style-src`
+        // still refuses inline <style> blocks. A blanket not-toContain cannot
+        // tell those apart and fails on a header that got stricter, not looser.
+        const directive = (name: string) =>
+          csp.split(';').map((d) => d.trim()).find((d) => d.startsWith(`${name} `)) ?? '';
+        expect(directive('script-src'), `script-src: ${csp}`).not.toContain('unsafe-inline');
+        expect(directive('style-src'), `style-src: ${csp}`).not.toContain('unsafe-inline');
+        expect(directive('default-src')).toContain("'none'");
+        expect(body, route).toContain(`nonce="${nonce}"`);
+      }
     });
   }, 900_000);
   /**
@@ -429,50 +504,69 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
   }, 900_000);
 
   it.each(TEMPLATES)(
-    '%s: every page response carries Cache-Control: no-store and a fresh nonce per fetch',
+    '%s: every page answers no-store with a fresh nonce per fetch, and registers no service worker',
     async (template) => {
-      // A page's nonce is drawn per request and is only secret while no two
-      // responses share it: a cached page replays one nonce to every visitor.
-      // So every page route answers `no-store`, and two fetches of the same
-      // page carry two nonces, each matching its own HTML (DR-17).
+      // SR6. A page's nonce is drawn per request and is only secret while no
+      // two responses share it: a cached page replays one nonce to every
+      // visitor. So every page route answers `no-store`, and two fetches of
+      // the same page carry two nonces, each matching its own HTML (DR-17).
+      // Checked after every build the template offers, so the minimal
+      // template's page is read both as try_render's server-rendered page
+      // (`build:ssr`) and as its browser shell (`build`).
       const name = `e2e-headers-${template}`;
       expect(runCli([name, '--template', template], tmp).status).toBe(0);
       const dest = path.join(tmp, name);
       const admin = path.join(dest, 'admin');
       expect(run('npm', ['ci', '--no-audit', '--no-fund'], admin).status).toBe(0);
-      expect(run('npm', ['run', 'build'], admin).status).toBe(0);
-      const cargo = run('cargo', ['build', '--locked'], dest);
-      expect(cargo.status, cargo.stderr).toBe(0);
 
-      // The page routes are the ones whose handler renders a page, read from
-      // main.rs, so a page added to a template is covered without editing this.
-      const main = fs.readFileSync(path.join(dest, 'src', 'main.rs'), 'utf8');
-      const rendersPage = (handler: string) =>
-        new RegExp(`async fn ${handler}\\b[\\s\\S]*?\\n}`).exec(main)?.[0].includes('render_page(') ?? false;
-      const pages = [...main.matchAll(/\.route\("([^"]+)",\s*get\((\w+)\)\)/g)]
-        .filter((m) => rendersPage(m[2]!))
-        .map((m) => m[1]!);
+      const pages = pageRoutes(fs.readFileSync(path.join(dest, 'src', 'main.rs'), 'utf8'));
       expect(pages.length, 'no page route found in main.rs').toBeGreaterThan(0);
       if (template === 'dashboard') expect(pages).toHaveLength(5);
 
-      await withServer(dest, name, async (_body, _res, get) => {
-        const nonces: string[] = [];
-        for (const route of pages) {
-          for (let fetchNo = 1; fetchNo <= 2; fetchNo++) {
-            const res = await get(route);
-            const where = `${route}, fetch ${fetchNo}`;
-            expect(res.status, where).toBe(200);
-            expect(res.headers.get('cache-control'), where).toBe('no-store');
-            expect(res.headers.get('content-type'), where).toMatch(/^text\/html/);
-            const csp = res.headers.get('content-security-policy') ?? '';
-            const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
-            expect(nonce, `${where}: no nonce in CSP: ${csp}`).toBeTruthy();
-            expect(await res.text(), `${where}: the HTML does not carry its own nonce`).toContain(`nonce="${nonce}"`);
-            nonces.push(nonce!);
+      const scripts = JSON.parse(fs.readFileSync(path.join(admin, 'package.json'), 'utf8')).scripts;
+      const builds = ['build', 'build:ssr'].filter((script) => scripts[script]);
+      const nonces: string[] = [];
+      for (const script of builds) {
+        const build = run('npm', ['run', script], admin);
+        expect(build.status, build.stdout + build.stderr).toBe(0);
+        const cargo = run('cargo', ['build', '--locked'], dest);
+        expect(cargo.status, cargo.stderr).toBe(0);
+        const root = script === 'build:ssr' ? '<div id="app" data-forma-ssr>' : '<div id="app"></div>';
+
+        await withServer(dest, name, async (_body, _res, get) => {
+          for (const route of pages) {
+            for (let fetchNo = 1; fetchNo <= 2; fetchNo++) {
+              const res = await get(route);
+              const where = `${script}: ${route}, fetch ${fetchNo}`;
+              expect(res.status, where).toBe(200);
+              expect(res.headers.get('cache-control'), where).toBe('no-store');
+              expect(res.headers.get('content-type'), where).toMatch(/^text\/html/);
+              const csp = res.headers.get('content-security-policy') ?? '';
+              const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+              expect(nonce, `${where}: no nonce in CSP: ${csp}`).toBeTruthy();
+              const html = await res.text();
+              expect(html, `${where}: the HTML does not carry its own nonce`).toContain(`nonce="${nonce}"`);
+              expect(html, `${where}: rendered by the wrong path`).toContain(root);
+              // DR-25: the worker is off, so no page registers one.
+              expect(html, `${where}: the page registers a service worker`).not.toMatch(/serviceWorker\.register/);
+              nonces.push(nonce!);
+            }
           }
-        }
-        expect(new Set(nonces).size, `a nonce repeated across fetches: ${nonces.join(' ')}`).toBe(nonces.length);
-      });
+
+          // ...and /sw.js is forma-server's retiring worker, not the one the
+          // build embedded: it deletes Forma's caches and unregisters, and
+          // answers no request.
+          const sw = await get('/sw.js');
+          expect(sw.status).toBe(200);
+          expect(sw.headers.get('content-type')).toMatch(/javascript/);
+          const worker = await sw.text();
+          expect(worker).toContain('registration.unregister()');
+          expect(worker).not.toMatch(/addEventListener\(\s*['"]fetch['"]/);
+          const built = path.join(admin, 'dist', 'sw.js');
+          if (fs.existsSync(built)) expect(worker).not.toBe(fs.readFileSync(built, 'utf8'));
+        });
+      }
+      expect(new Set(nonces).size, `a nonce repeated across fetches: ${nonces.join(' ')}`).toBe(nonces.length);
     },
     900_000,
   );

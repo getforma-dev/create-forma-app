@@ -38,6 +38,12 @@ data in `src/data.rs`, so exposure costs you nothing — the moment you point th
 at a real database, put authentication in front of them. The server prints a
 warning at startup whenever `FORMA_HOST` is set to a non-loopback address.
 
+**No service worker.** `main.rs` configures forma-server's worker setting off
+(`sw::ServiceWorker::off()`), so no page registers one, and `/sw.js` serves
+forma-server's retiring worker: a browser that installed a Forma worker on this
+origin before deletes its caches and unregisters it on its next visit. The
+worker is opt-in, per application; see `forma_server::sw` before turning it on.
+
 ---
 
 ## What's Inside
@@ -106,7 +112,7 @@ flowchart TB
     direction TB
     pages["Page Routes<br/><i>/ · /deployments · /servers · /settings</i>"]
     api["JSON API<br/><i>8 endpoints, unauthenticated</i>"]
-    assets["Static Assets<br/><i>rust-embed · content hashing<br/>Service Worker · CSP headers</i>"]
+    assets["Static Assets<br/><i>rust-embed · content hashing<br/>CSP headers · no service worker</i>"]
   end
 
   client -- "createFetch( '/api/…' )" --> api
@@ -158,11 +164,19 @@ bar and layout genuinely arrive as server-rendered markup. The page *content*
 still does not, because it is not knowable at compile time, and the Playwright
 number does not move. Fixing resolution was necessary and is not sufficient.
 
-So `main.rs` asks for `RenderMode::Phase1ClientMount` explicitly, `build.ts` has
-no `ssr` flag, and there is no `build:ssr` script to reach for by mistake. The
-server does initialise `tracing_subscriber`, so if you do wire SSR up yourself,
-forma-server's "falling back to Phase 1" warnings will actually reach your
-terminal instead of disappearing.
+So the browser route is a declaration on both sides: `build.ts` declares the
+dashboard's entry `ssr: false`, `main.rs` serves every page through
+`render_browser_shell`, and there is no `build:ssr` script to reach for by
+mistake. The server never walks a module here, so no failed server render can
+quietly become a client-mounted page. If you do wire SSR up yourself for a
+page, render it with `try_render`: a failure comes back to the handler as a
+coded `RenderError`, which it logs through the `tracing` subscriber `main.rs`
+installs and answers with an error page.
+
+The build scripts pass `--strict`, which `build.ts` maps to `@getforma/build`'s
+`strict: true`. It changes nothing while no page is server-rendered; once one
+is, a construct the compiler cannot render on the server fails the build with
+its code, file and line instead of becoming an empty island.
 
 **Want to see Phase 2 working?** Scaffold the `minimal` template
 (`npx @getforma/create-app my-app --template minimal`). It keeps its page shell
