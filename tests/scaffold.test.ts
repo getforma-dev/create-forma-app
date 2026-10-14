@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { TEMPLATES, validateProjectName } from '../src/scaffold';
-import { E2E, PROJECT_NAMES, TEMPLATES_DIR, listFiles, mkTmpDir, rmrf, runCli, run, withServer } from './helpers';
+import { E2E, PROJECT_NAMES, TEMPLATES_DIR, listFiles, mkTmpDir, rmrf, runCli, run, runRefusingServer, withServer } from './helpers';
 
 /**
  * Runs the real CLI against a real temp directory.
@@ -314,6 +314,66 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
     });
   }, 900_000);
 
+  it('minimal: a corrupt module stops the server before it binds, and a failed render answers 500, with neither its error nor a shell', async () => {
+    // DR-11's two guarantees, read from the running server rather than from
+    // main.rs: a module the build declared that is corrupt is a failed
+    // deploy, refused at start; and a page that fails to render is answered
+    // by the handler as an error, never replaced by the Phase 1 shell that
+    // render_page used to substitute.
+    const name = 'e2e-dr11';
+    expect(runCli([name, '--template', 'minimal'], tmp).status).toBe(0);
+    const dest = path.join(tmp, name);
+    const admin = path.join(dest, 'admin');
+    expect(run('npm', ['ci', '--no-audit', '--no-fund'], admin).status).toBe(0);
+    const build = run('npm', ['run', 'build:ssr'], admin);
+    expect(build.status, build.stdout + build.stderr).toBe(0);
+    const cargo = run('cargo', ['build', '--locked'], dest);
+    expect(cargo.status, cargo.stderr).toBe(0);
+
+    // A truncated module: the server exits, naming the route and the code,
+    // and never binds its port.
+    const manifest = JSON.parse(fs.readFileSync(path.join(admin, 'dist', 'manifest.json'), 'utf8'));
+    const irPath = path.join(admin, 'dist', manifest.routes['/'].ir);
+    const ir = fs.readFileSync(irPath);
+    fs.writeFileSync(irPath, ir.subarray(0, 40));
+    const refused = await runRefusingServer(dest, name);
+    expect(refused.accepted, `the server bound 127.0.0.1:3000 with a corrupt module:\n${refused.output}`).toBe(false);
+    expect(refused.code, `the server was still running with a corrupt module:\n${refused.output}`).not.toBeNull();
+    expect(refused.code, refused.output).not.toBe(0);
+    expect(refused.output).toContain('LOAD-');
+    expect(refused.output).toContain('route /');
+    fs.writeFileSync(irPath, ir);
+
+    // A render that fails: a one-byte output budget makes try_render return
+    // RENDER-301 for `/`.
+    const mainPath = path.join(dest, 'src', 'main.rs');
+    const main = fs.readFileSync(mainPath, 'utf8');
+    const failing = main.replace(
+      'let ctx = RenderCtx::new();',
+      'let ctx = RenderCtx::new().with_limits(forma_server::WalkLimits { max_output_bytes: 1, ..Default::default() });',
+    );
+    expect(failing, 'main.rs has no `let ctx = RenderCtx::new();` to give a budget').not.toBe(main);
+    fs.writeFileSync(mainPath, failing);
+    const rebuild = run('cargo', ['build', '--locked'], dest);
+    expect(rebuild.status, rebuild.stderr).toBe(0);
+
+    await withServer(dest, name, async (body, res, _get, output) => {
+      // The handler's own 500, never cached or sniffed, carrying neither the
+      // error (which belongs in the log) nor an empty shell.
+      expect(res.status, body).toBe(500);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(body).not.toContain('RENDER-');
+      expect(body).not.toContain('<div id="app"');
+      // ...and the log line that counts it, by code and route.
+      for (let wait = 0; wait < 50 && !output().includes('RENDER-301'); wait++) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(output()).toContain('code="RENDER-301"');
+      expect(output()).toContain('route="/"');
+    });
+  }, 900_000);
+
   it('minimal: build:ssr is strict: a construct the server cannot render fails the build, naming its code, file and line', () => {
     // A `.map()` child is BUILD-701: the server renders an empty island and
     // the rows never appear after activation. The template's scripts pass
@@ -562,8 +622,11 @@ describe.runIf(E2E)('scaffolded projects build (FORMA_SCAFFOLD_E2E=1)', () => {
           const worker = await sw.text();
           expect(worker).toContain('registration.unregister()');
           expect(worker).not.toMatch(/addEventListener\(\s*['"]fetch['"]/);
+          // @getforma/build writes a worker into every production build, so
+          // there is always one the server must not be serving.
           const built = path.join(admin, 'dist', 'sw.js');
-          if (fs.existsSync(built)) expect(worker).not.toBe(fs.readFileSync(built, 'utf8'));
+          expect(fs.existsSync(built), 'the build embedded no sw.js').toBe(true);
+          expect(worker).not.toBe(fs.readFileSync(built, 'utf8'));
         });
       }
       expect(new Set(nonces).size, `a nonce repeated across fetches: ${nonces.join(' ')}`).toBe(nonces.length);

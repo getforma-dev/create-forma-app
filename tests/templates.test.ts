@@ -367,11 +367,19 @@ describe.each(TEMPLATES)('%s template', (template) => {
     expect(main).not.toMatch(/\brender_page(?:_with_nonce)?\(/);
     expect(main).not.toContain('into_parts_unchecked');
     expect(main).not.toContain('PageOutput');
-    expect(main).not.toMatch(/content-security-policy|CONTENT_SECURITY_POLICY|CACHE_CONTROL/i);
     // A failed render comes back as a RenderError, which the handler answers
-    // with its own response rather than a panic (DR-11).
+    // with its own response rather than a panic (DR-11): a 500 that is never
+    // cached or sniffed, the one place a template writes a cache header.
     expect(main).not.toMatch(/(?:try_render|render_browser_shell)\([^;]*?\)\s*\.(?:unwrap|expect)\(/);
-    expect(main).toMatch(/Err\(error\) => \{[\s\S]{0,300}?StatusCode::INTERNAL_SERVER_ERROR/);
+    const errorArms = main.match(/Err\(error\) => \{[\s\S]*?\.into_response\(\)\s*\}/g) ?? [];
+    expect(errorArms.length, 'no Err(error) arm answering a failed render').toBeGreaterThan(0);
+    for (const arm of errorArms) {
+      expect(arm).toContain('StatusCode::INTERNAL_SERVER_ERROR');
+      expect(arm).toContain('(header::CACHE_CONTROL, "no-store")');
+      expect(arm).toContain('(header::X_CONTENT_TYPE_OPTIONS, "nosniff")');
+    }
+    const pages = errorArms.reduce((code, arm) => code.replace(arm, ''), main);
+    expect(pages).not.toMatch(/content-security-policy|CONTENT_SECURITY_POLICY|CACHE_CONTROL/i);
   });
 
   it('uses no API forma-server deprecates, naming config_script only as None in each PageConfig', () => {

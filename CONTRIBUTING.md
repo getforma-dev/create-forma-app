@@ -39,8 +39,11 @@ whose CSP nonce matches the script tag, and every page of both must answer
 `Cache-Control: no-store` with a fresh nonce on each fetch, register no service
 worker, and leave `/sw.js` to forma-server's retiring worker. It also runs
 `npm audit signatures` over each template's install, fails on any
-`use of deprecated` warning from the template's Rust, and checks that a
-construct the server cannot render fails the minimal template's strict build. If you change a template's dependencies,
+`use of deprecated` warning from the template's Rust, checks that a
+construct the server cannot render fails the minimal template's strict build,
+and that the minimal server refuses to start on a truncated module and
+answers a failed render with its own 500, carrying neither the error nor an
+empty shell. If you change a template's dependencies,
 regenerate its lockfiles as
 [`docs/TEMPLATES.md`](docs/TEMPLATES.md#regenerating-a-templates-lockfiles)
 describes. CI runs it on Linux and Windows, and again before

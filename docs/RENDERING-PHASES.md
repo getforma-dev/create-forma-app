@@ -71,6 +71,7 @@ the Phase 1 shell `render_page` used to substitute for it.
 - Verified by: `tests/templates.test.ts` > "keeps its SSR root as literal JSX inside the mount callback"
 - Verified by: `tests/templates.test.ts` > "loads its IR modules with the strict loader and renders a loaded route with try_render, passing slots"
 - Verified by: `tests/scaffold.test.ts` (scaffold E2E) — the built server must serve real server-rendered markup after `build:ssr`
+- Verified by: `tests/scaffold.test.ts` > "minimal: a corrupt module stops the server before it binds, and a failed render answers 500, with neither its error nor a shell"
 
 **`dashboard` is Phase 1, deliberately.** Every one of its pages renders data
 fetched at runtime from its own `/api/*` routes — `.map()` over a fetched

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -57,10 +57,16 @@ async fn page_dashboard(State(state): State<Arc<AppState>>) -> Response {
         // the document security headers.
         Ok(page) => page.into_response(),
         // Forma logs nothing: count failures by code and route here, and
-        // answer with your own error page.
+        // answer with your own error page. The error stays in the log, never
+        // in the response, and no empty shell takes the page's place.
         Err(error) => {
             tracing::error!(code = error.code(), route = error.route(), "{error}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CACHE_CONTROL, "no-store"), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")],
+                "Internal Server Error",
+            )
+                .into_response()
         }
     }
 }
