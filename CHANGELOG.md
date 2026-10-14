@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-14
+
 Template fixes from the Forma Stack decision brief's defects list, DR-17 and
 DR-32 (ticket FORMA-008). The lockfiles pin the versions published today
 (`@getforma/core` 2.0.1, `@getforma/build` 0.2.0, `@getforma/compiler` 0.3.5,
