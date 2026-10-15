@@ -1,5 +1,12 @@
 # @getforma/create-app
 
+> **Development has moved to [getforma-dev/forma](https://github.com/getforma-dev/forma).**
+> This repository's `main` branch is retired. New work and issues belong in the
+> [merged repository](https://github.com/getforma-dev/forma/tree/main/packages/create-app).
+> Maintenance for @getforma/create-app remains on
+> [`maint/0.6.x`](https://github.com/getforma-dev/create-forma-app/tree/maint/0.6.x), with its existing release workflow.
+> Historical source, commits and tags remain available here.
+
 [![npm version](https://img.shields.io/npm/v/@getforma/create-app.svg)](https://www.npmjs.com/package/@getforma/create-app)
 [![CI](https://github.com/getforma-dev/create-forma-app/actions/workflows/ci.yml/badge.svg)](https://github.com/getforma-dev/create-forma-app/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
